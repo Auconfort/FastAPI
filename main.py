@@ -1,22 +1,21 @@
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 import openai
-import asyncpg
-import os
+import httpx
 import re
+import os
 
-# 🔐 Config
-openai.api_key = "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"
-SUPABASE_DB_URL = "postgresql://postgres:service_rolesecret@db.bqeqwntbvvitylniwkfm.supabase.co:5432/postgres"
+# Config
+openai.api_key = os.getenv("OPENAI_API_KEY")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 
-# 🚀 App init
 app = FastAPI()
 
-# 📦 Request model
 class ProductQuery(BaseModel):
-    message: str  # natural language prompt (e.g. “Quel est le prix du Matelas Basic D30 160x190 ?”)
+    message: str
 
-# 🧠 SKU Parser
+# SKU parser
 def parse_sku(ref: str):
     match = re.search(r"D(\d+)-Ep(\d+)-(\d+x\d+)", ref)
     if match:
@@ -27,22 +26,22 @@ def parse_sku(ref: str):
         }
     return {}
 
-# 🔄 Query Supabase
-async def fetch_products_from_db():
-    conn = await asyncpg.connect(SUPABASE_DB_URL)
-    rows = await conn.fetch("SELECT * FROM products")
-    await conn.close()
-    return [dict(r) for r in rows]
+# Get product data from Supabase REST API
+async def fetch_products():
+    async with httpx.AsyncClient() as client:
+        headers = {
+            "apikey": SUPABASE_ANON_KEY,
+            "Authorization": f"Bearer {SUPABASE_ANON_KEY}"
+        }
+        response = await client.get(f"{SUPABASE_URL}/rest/v1/products", headers=headers, params={"select": "*"})
+        response.raise_for_status()
+        return response.json()
 
-# 🔥 Webhook route
 @app.post("/webhook")
 async def product_info(req: ProductQuery):
     user_prompt = req.message
+    products = await fetch_products()
 
-    # 1. Fetch all product data
-    products = await fetch_products_from_db()
-
-    # 2. Build product context
     enriched_data = []
     for product in products:
         parsed = parse_sku(product["ref"]) if product.get("has_thickness") else {}
@@ -52,13 +51,11 @@ async def product_info(req: ProductQuery):
         }
         enriched_data.append(context_entry)
 
-    # 3. Prepare AI context
     context_text = "\n".join([
-        f"{p['title']} | {p['subcategory']} | Ref: {p['ref']} | {p['description']} | Prix: {p['price']} DA | Taille: {p.get('dimensions')} | Densité: {p.get('density')} | Épaisseur: {p.get('thickness')}"
+        f"{p.get('title', '')} | {p.get('subcategory', '')} | Ref: {p.get('ref', '')} | {p.get('description', '')} | Prix: {p.get('price', '')} DA | Taille: {p.get('dimensions', '')} | Densité: {p.get('density', '')} | Épaisseur: {p.get('thickness', '')}"
         for p in enriched_data
     ])
 
-    # 4. Run OpenAI query
     system_prompt = (
         "Tu es un assistant produit d'Auconfort. Réponds avec précision uniquement à partir des données suivantes :\n"
         f"{context_text}"
@@ -73,5 +70,4 @@ async def product_info(req: ProductQuery):
         temperature=0.2
     )
 
-    answer = response["choices"][0]["message"]["content"]
-    return {"answer": answer}
+    return {"answer": response["choices"][0]["message"]["content"]}
