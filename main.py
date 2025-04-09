@@ -1,32 +1,28 @@
 import os
-SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
+import re
+import httpx
+from fastapi import FastAPI
+from pydantic import BaseModel
+from openai import OpenAI
+
+# Env vars
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 print("Loaded SUPABASE_ANON_KEY:", SUPABASE_ANON_KEY)
 
+# Initialize OpenAI client
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
-
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
-
-from fastapi import FastAPI, Request
-from pydantic import BaseModel
-import openai
-import httpx
-import re
-import os
-
-# Config
-openai.api_key = os.getenv("OPENAI_API_KEY")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
-
+# FastAPI setup
 app = FastAPI()
 
+# Schema
 class ProductQuery(BaseModel):
     message: str
 
-# SKU parser
+# SKU Parser
 def parse_sku(ref: str):
     match = re.search(r"D(\d+)-Ep(\d+)-(\d+x\d+)", ref)
     if match:
@@ -37,17 +33,22 @@ def parse_sku(ref: str):
         }
     return {}
 
-# Get product data from Supabase REST API
+# Supabase Fetch
 async def fetch_products():
     async with httpx.AsyncClient() as client:
         headers = {
             "apikey": SUPABASE_ANON_KEY,
             "Authorization": f"Bearer {SUPABASE_ANON_KEY}"
         }
-        response = await client.get(f"{SUPABASE_URL}/rest/v1/products", headers=headers, params={"select": "*"})
+        response = await client.get(
+            f"{SUPABASE_URL}/rest/v1/products",
+            headers=headers,
+            params={"select": "*"}
+        )
         response.raise_for_status()
         return response.json()
 
+# Webhook Endpoint
 @app.post("/webhook")
 async def product_info(req: ProductQuery):
     user_prompt = req.message
@@ -56,10 +57,7 @@ async def product_info(req: ProductQuery):
     enriched_data = []
     for product in products:
         parsed = parse_sku(product["ref"]) if product.get("has_thickness") else {}
-        context_entry = {
-            **product,
-            **parsed
-        }
+        context_entry = {**product, **parsed}
         enriched_data.append(context_entry)
 
     context_text = "\n".join([
@@ -72,7 +70,7 @@ async def product_info(req: ProductQuery):
         f"{context_text}"
     )
 
-    response = openai.ChatCompletion.create(
+    response = openai_client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
             {"role": "system", "content": system_prompt},
@@ -81,4 +79,4 @@ async def product_info(req: ProductQuery):
         temperature=0.2
     )
 
-    return {"answer": response["choices"][0]["message"]["content"]}
+    return {"answer": response.choices[0].message.content}
