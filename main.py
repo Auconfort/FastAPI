@@ -1,3 +1,8 @@
+import os
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
+
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 import openai
