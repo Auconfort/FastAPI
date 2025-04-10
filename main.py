@@ -5,6 +5,32 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from openai import OpenAI
 
+from fastapi import FastAPI
+import httpx
+import os
+
+app = FastAPI()
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
+
+@app.get("/test-products")
+async def test_products():
+    headers = {
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": f"Bearer {SUPABASE_ANON_KEY}"
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{SUPABASE_URL}/rest/v1/products",
+            headers=headers,
+            params={"select": "title,ref,price_dz", "limit": 5}
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+
 # Env vars
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
